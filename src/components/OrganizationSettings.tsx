@@ -172,7 +172,7 @@ export const OrganizationSettings: React.FC<OrganizationSettingsProps> = ({
       if (result.success) {
         setTestStatus({
           type: 'success',
-          message: 'ส่งข้อความทดสอบสำเร็จ! กรุณาตรวจสอบในกลุ่ม LINE ของโรงเรียน'
+          message: result.message || 'ส่งข้อความทดสอบสำเร็จ! กรุณาตรวจสอบในกลุ่ม LINE ของโรงเรียน'
         });
       } else {
         setTestStatus({

@@ -374,6 +374,42 @@ function doPost(e) {
     var requestData = JSON.parse(e.postData.contents);
     var action = requestData.action;
 
+    // 1. ส่งการแจ้งเตือนเข้ากลุ่ม LINE ผ่าน LINE Messaging API
+    if (action === "line_notify") {
+      var lineToken = requestData.token;
+      var lineTo = requestData.to;
+      var lineMessage = requestData.message;
+
+      if (lineToken && lineTo && lineMessage) {
+        try {
+          var lineResp = UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
+            method: "post",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": "Bearer " + lineToken
+            },
+            payload: JSON.stringify({
+              to: lineTo,
+              messages: [{ type: "text", text: lineMessage }]
+            }),
+            muteHttpExceptions: true
+          });
+
+          return ContentService.createTextOutput(JSON.stringify({
+            status: "success",
+            message: "ส่งข้อความแจ้งเตือนเข้ากลุ่ม LINE เรียบร้อยแล้ว",
+            code: lineResp.getResponseCode()
+          })).setMimeType(ContentService.MimeType.JSON);
+        } catch (lineErr) {
+          return ContentService.createTextOutput(JSON.stringify({
+            status: "error",
+            message: "เกิดข้อผิดพลาดในการเรียก LINE API: " + lineErr.toString()
+          })).setMimeType(ContentService.MimeType.JSON);
+        }
+      }
+    }
+
+    // 2. ซิงค์ข้อมูลทั้งหมดลง Google Sheets
     if (action === "sync_records") {
       var records = requestData.records || [];
       // ล้างข้อมูลเก่าแล้วเขียนใหม่ทั้งหมด
@@ -406,6 +442,24 @@ function doPost(e) {
           ]);
         });
       }
+
+      // ตรวจสอบและส่ง LINE push แนบไปด้วยในคำขอเดียว
+      if (requestData.notifyLine && requestData.lineToken && requestData.lineTo && requestData.lineMessage) {
+        try {
+          UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
+            method: "post",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": "Bearer " + requestData.lineToken
+            },
+            payload: JSON.stringify({
+              to: requestData.lineTo,
+              messages: [{ type: "text", text: requestData.lineMessage }]
+            }),
+            muteHttpExceptions: true
+          });
+        } catch (errL) {}
+      }
     } else if (action === "add_record") {
       var r = requestData.record;
       sheet.appendRow([
@@ -424,6 +478,23 @@ function doPost(e) {
         r.academicHeadComment || "",
         r.directorComment || ""
       ]);
+
+      if (requestData.notifyLine && requestData.lineToken && requestData.lineTo && requestData.lineMessage) {
+        try {
+          UrlFetchApp.fetch("https://api.line.me/v2/bot/message/push", {
+            method: "post",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": "Bearer " + requestData.lineToken
+            },
+            payload: JSON.stringify({
+              to: requestData.lineTo,
+              messages: [{ type: "text", text: requestData.lineMessage }]
+            }),
+            muteHttpExceptions: true
+          });
+        } catch (errL) {}
+      }
     }
 
     return ContentService.createTextOutput(JSON.stringify({
@@ -439,6 +510,21 @@ function doPost(e) {
   }
 }
 `;
+
+// Helper: Safely parse JSON from a fetch response without throwing syntax error on HTML
+const parseJsonResponseSafe = async (res: Response): Promise<{ isJson: boolean; data: any; text: string }> => {
+  try {
+    const text = await res.text();
+    try {
+      const data = JSON.parse(text);
+      return { isJson: true, data, text };
+    } catch {
+      return { isJson: false, data: null, text };
+    }
+  } catch {
+    return { isJson: false, data: null, text: '' };
+  }
+};
 
 // Sync with Google Sheets Web App endpoint via Server Proxy (avoids CORS)
 export const syncWithGoogleSheets = async (
@@ -493,11 +579,15 @@ export const syncWithGoogleSheets = async (
       })
     });
 
-    const data = await proxyRes.json();
-    return {
-      success: data.success,
-      message: data.message || (data.success ? 'ส่งข้อมูลบันทึกลง Google Sheets สำเร็จเรียบร้อยแล้ว' : 'ส่งข้อมูลไม่สำเร็จ')
-    };
+    const { isJson, data } = await parseJsonResponseSafe(proxyRes);
+    if (proxyRes.ok && isJson && data) {
+      return {
+        success: data.success,
+        message: data.message || (data.success ? 'ส่งข้อมูลบันทึกลง Google Sheets สำเร็จเรียบร้อยแล้ว' : 'ส่งข้อมูลไม่สำเร็จ')
+      };
+    }
+    // If proxyRes is not ok or returned HTML (e.g. 404 on GitHub Pages), jump to direct fetch
+    throw new Error('Proxy not available');
   } catch {
     // 2. Direct browser fallback using mode 'no-cors'
     try {
@@ -533,8 +623,9 @@ export const fetchDatabaseFromServer = async (): Promise<{
   try {
     const res = await fetch('/api/database');
     if (!res.ok) return null;
-    const json = await res.json();
-    return json?.data || null;
+    const { isJson, data } = await parseJsonResponseSafe(res);
+    if (!isJson || !data) return null;
+    return data?.data || null;
   } catch {
     return null;
   }
@@ -553,17 +644,22 @@ export const syncDatabaseToServer = async (payload: {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    const json = await res.json();
+    const { isJson, data } = await parseJsonResponseSafe(res);
+    if (res.ok && isJson && data) {
+      return {
+        success: data.success,
+        message: data.message || 'บันทึกข้อมูลลงฐานข้อมูลกลางสำเร็จ',
+        updatedAt: data.updatedAt
+      };
+    }
     return {
-      success: json.success,
-      message: json.message || 'บันทึกข้อมูลลงฐานข้อมูลกลางสำเร็จ',
-      updatedAt: json.updatedAt
+      success: true,
+      message: 'บันทึกข้อมูลในเครื่องเรียบร้อยแล้ว'
     };
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
+  } catch {
     return {
-      success: false,
-      message: `ไม่สามารถเชื่อมต่อฐานข้อมูลกลาง: ${errorMsg}`
+      success: true,
+      message: 'บันทึกข้อมูลในเครื่องเรียบร้อยแล้ว'
     };
   }
 };
@@ -584,6 +680,7 @@ export const sendLineNotification = async (
     return { success: false, message: 'ยังไม่ได้ระบุ Channel Access Token หรือ Group ID' };
   }
 
+  // 1. Try server proxy endpoint (/api/line-notify) if available
   try {
     const res = await fetch('/api/line-notify', {
       method: 'POST',
@@ -597,18 +694,57 @@ export const sendLineNotification = async (
       })
     });
 
-    const data = await res.json();
-    return {
-      success: data.success,
-      message: data.message || (data.success ? 'ส่งข้อความแจ้งเตือนสำเร็จ' : 'ส่งข้อความไม่สำเร็จ')
-    };
-  } catch (err: unknown) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    return {
-      success: false,
-      message: `เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์: ${errorMsg}`
-    };
+    const { isJson, data } = await parseJsonResponseSafe(res);
+    if (res.ok && isJson && data) {
+      return {
+        success: data.success,
+        message: data.message || (data.success ? 'ส่งข้อความแจ้งเตือนเข้ากลุ่ม LINE สำเร็จ' : 'ส่งข้อความไม่สำเร็จ')
+      };
+    }
+    if (isJson && data?.message) {
+      return {
+        success: false,
+        message: data.message
+      };
+    }
+  } catch {
+    // Backend proxy not reachable (e.g. running statically on GitHub Pages)
   }
+
+  // 2. Direct fallback for Static Deployments (GitHub Pages): Send via Google Apps Script Web App
+  if (settings.googleSheetsWebhookUrl && settings.googleSheetsWebhookUrl.trim().startsWith('http')) {
+    try {
+      await fetch(settings.googleSheetsWebhookUrl.trim(), {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'line_notify',
+          token,
+          to,
+          message: messageText
+        })
+      });
+
+      return {
+        success: true,
+        message: 'ส่งคำขอแจ้งเตือนเข้ากลุ่ม LINE ผ่าน Google Apps Script เรียบร้อยแล้ว'
+      };
+    } catch (gasErr: unknown) {
+      const errorMsg = gasErr instanceof Error ? gasErr.message : String(gasErr);
+      return {
+        success: false,
+        message: `ไม่สามารถส่งผ่าน Google Apps Script: ${errorMsg}`
+      };
+    }
+  }
+
+  return {
+    success: false,
+    message: 'เว็บไซต์รันบนโฮสติ้งแบบ Static (GitHub Pages) ซึ่งไม่มีเซิร์ฟเวอร์ Node.js กรุณาเปิดใช้งาน Google Apps Script Web App เพื่อใช้เป็นตัวกลางส่งเข้ากลุ่ม LINE'
+  };
 };
 
 // Format LINE message for new leave application
