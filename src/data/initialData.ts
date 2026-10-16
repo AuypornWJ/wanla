@@ -11,6 +11,21 @@ export const createDefaultSignatureSvg = (name: string): string => {
 
 export const INITIAL_PERSONNEL: Personnel[] = [
   {
+    id: 'p-demo',
+    prefix: 'นางสาว',
+    firstName: 'ห้วยไคร้',
+    lastName: 'ใจดี',
+    position: 'ครู (ตัวละคร demo)',
+    academicStanding: 'ชำนาญการ',
+    department: 'กลุ่มสาระการเรียนรู้ทั่วไป',
+    address: '99 ม.2 ต.ดงคู่ อ.ศรีสัชนาลัย จ.สุโขทัย 64130',
+    phone: '087-654-3210',
+    email: 'huaykhrai.jaidee@demo.ac.th',
+    role: 'teacher',
+    signatureUrl: createDefaultSignatureSvg('นางสาวห้วยไคร้ ใจดี'),
+    hireDate: '2020-05-15'
+  },
+  {
     id: 'p-001',
     prefix: 'นาย',
     firstName: 'สมบูรณ์',

@@ -258,18 +258,32 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
 
         {/* Step-by-Step Instructions & Code for Google Sheets */}
         <div className="space-y-4">
-          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2.5 text-xs text-slate-700">
-            <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
+          <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-200 space-y-2.5 text-xs text-slate-700">
+            <h4 className="font-bold text-emerald-950 flex items-center gap-1.5 text-sm">
               <HelpCircle className="w-4 h-4 text-emerald-600" />
-              ขั้นตอนการติดตั้งบน Google Sheets (ง่ายและเสร็จใน 2 นาที):
+              โค้ด Google Apps Script เวอร์ชันใหม่ (รวมข้อมูลทุกเครื่อง + แจ้งเตือนกลุ่ม LINE):
             </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 my-2 text-[11px]">
+              <div className="bg-white p-2.5 rounded-xl border border-emerald-100 flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs shrink-0">1</span>
+                <span><strong>รวมข้อมูลทุกเครื่อง:</strong> ข้อมูลจากคอมพิวเตอร์ มือถือ แท็บเล็ต รวมอยู่ในชีตเดียวกัน ไม่เขียนทับหรือลบของเครื่องอื่น</span>
+              </div>
+              <div className="bg-white p-2.5 rounded-xl border border-emerald-100 flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs shrink-0">2</span>
+                <span><strong>แจ้งเตือนกลุ่ม LINE:</strong> รีเลย์ส่งข้อความเข้ากลุ่ม LINE ของโรงเรียนอัตโนมัติทันทีที่ยื่นหรืออนุมัติใบลา</span>
+              </div>
+            </div>
+
+            <p className="font-bold text-slate-800 text-[11px] pt-1">
+              ขั้นตอนการติดตั้งหรืออัปเดตโค้ด (เสร็จใน 1 นาที):
+            </p>
             <ol className="list-decimal list-inside space-y-1.5 leading-relaxed pl-1 text-[11px] sm:text-xs">
-              <li>เปิด <strong>Google Sheets</strong> แผ่นงานใหม่ของโรงเรียน</li>
+              <li>เปิด <strong>Google Sheets</strong> ของโรงเรียน (แผ่นงานสถิติการลา)</li>
               <li>ไปที่เมนู <strong>ส่วนขยาย (Extensions)</strong> &gt; <strong>Apps Script</strong></li>
-              <li>ลบโค้ดเดิมทั้งหมด แล้วกดปุ่ม <strong>คัดลอกโค้ด Apps Script</strong> ด้านล่างนี้ไปวาง</li>
-              <li>คลิกปุ่ม <strong>การทำให้ใช้งานได้ (Deploy)</strong> &gt; <strong>การทำให้ใช้งานได้ใหม่ (New deployment)</strong></li>
-              <li>เลือกประเภท <strong>เว็บแอป (Web App)</strong> &gt; ผู้มีสิทธิ์เข้าถึง: <strong>ทุกคน (Anyone)</strong></li>
-              <li>คัดลอก <strong>Web App URL</strong> มาวางในช่องด้านบน แล้วกดบันทึก</li>
+              <li>ลบโค้ดเดิมใน <code className="bg-slate-200 px-1 py-0.5 rounded font-mono text-emerald-900">Code.gs</code> ออกทั้งหมด แล้วกดปุ่ม <strong>คัดลอกโค้ด Apps Script</strong> ด้านล่างนี้ไปวาง</li>
+              <li>คลิกปุ่ม <strong>การทำให้ใช้งานได้ (Deploy)</strong> &gt; <strong>จัดการการทำให้ใช้งานได้ (Manage deployments)</strong></li>
+              <li>คลิกไอคอน <strong>ดินสอ (แก้ไข)</strong> &gt; ในช่องเวอร์ชันเลือก <strong>เวอร์ชันใหม่ (New version)</strong> &gt; กด <strong>ทำให้ใช้งานได้ (Deploy)</strong></li>
+              <li>คัดลอก <strong>Web App URL</strong> ที่ได้มาวางในช่องด้านบน แล้วกดบันทึก</li>
             </ol>
           </div>
 

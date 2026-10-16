@@ -32,7 +32,13 @@ export const getStoredPersonnel = (): Personnel[] => {
     return INITIAL_PERSONNEL;
   }
   try {
-    return JSON.parse(data);
+    const list: Personnel[] = JSON.parse(data);
+    if (!list.some(p => p.id === 'p-demo')) {
+      const updated = [INITIAL_PERSONNEL[0], ...list];
+      localStorage.setItem(STORAGE_KEYS.PERSONNEL, JSON.stringify(updated));
+      return updated;
+    }
+    return list;
   } catch {
     return INITIAL_PERSONNEL;
   }
@@ -126,8 +132,8 @@ export const addAuditLog = (actorName: string, actorRole: string, action: string
 export const getActiveUserId = (): string => {
   const saved = localStorage.getItem(STORAGE_KEYS.ACTIVE_USER_ID);
   if (saved) return saved;
-  // default to Chatchawal (teacher) as requested in sample
-  return 'p-007';
+  // default to Huaykhrai Jaidee (demo character)
+  return 'p-demo';
 };
 
 export const setActiveUserId = (id: string) => {
@@ -348,10 +354,36 @@ function doGet(e) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName("สถิติการลา") || ss.insertSheet("สถิติการลา");
   var data = sheet.getDataRange().getValues();
+  var records = [];
   
+  if (data.length > 1) {
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      if (row[0]) {
+        records.push({
+          referenceNumber: row[0].toString(),
+          submittedAt: row[1] ? row[1].toString() : "",
+          personnelName: row[2] ? row[2].toString() : "",
+          personnelPosition: row[3] ? row[3].toString() : "",
+          leaveTypeLabel: row[4] ? row[4].toString() : "",
+          startDate: row[5] instanceof Date ? Utilities.formatDate(row[5], "GMT+7", "yyyy-MM-dd") : row[5].toString(),
+          endDate: row[6] instanceof Date ? Utilities.formatDate(row[6], "GMT+7", "yyyy-MM-dd") : row[6].toString(),
+          totalDays: Number(row[7]) || 1,
+          reason: row[8] ? row[8].toString() : "",
+          substituteName: row[9] ? row[9].toString() : "",
+          contactPhone: row[10] ? row[10].toString() : "",
+          statusLabel: row[11] ? row[11].toString() : "",
+          academicHeadComment: row[12] ? row[12].toString() : "",
+          directorComment: row[13] ? row[13].toString() : ""
+        });
+      }
+    }
+  }
+
   return ContentService.createTextOutput(JSON.stringify({
     status: "success",
-    count: data.length > 1 ? data.length - 1 : 0,
+    count: records.length,
+    records: records,
     timestamp: new Date().toISOString()
   })).setMimeType(ContentService.MimeType.JSON);
 }
@@ -361,20 +393,22 @@ function doPost(e) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName("สถิติการลา");
     
+    var header = [
+      "เลขที่คำขอ", "วันที่ยื่น", "ชื่อ-นามสกุล", "ตำแหน่ง", "ประเภทการลา", 
+      "วันที่เริ่ม", "วันที่สิ้นสุด", "จำนวนวัน", "เหตุผลการลา", "ผู้ปฏิบัติหน้าที่แทน", 
+      "เบอร์ติดต่อ", "สถานะ", "ความเห็นวิชาการ", "คำสั่งผู้อำนวยการ"
+    ];
+
     if (!sheet) {
       sheet = ss.insertSheet("สถิติการลา");
-      sheet.appendRow([
-        "เลขที่คำขอ", "วันที่ยื่น", "ชื่อ-นามสกุล", "ตำแหน่ง", "ประเภทการลา", 
-        "วันที่เริ่ม", "วันที่สิ้นสุด", "จำนวนวัน", "เหตุผลการลา", "ผู้ปฏิบัติหน้าที่แทน", 
-        "เบอร์ติดต่อ", "สถานะ", "ความเห็นวิชาการ", "คำสั่งผู้อำนวยการ"
-      ]);
+      sheet.appendRow(header);
       sheet.getRange(1, 1, 1, 14).setBackground("#1e3a8a").setFontColor("#ffffff").setFontWeight("bold");
     }
 
     var requestData = JSON.parse(e.postData.contents);
     var action = requestData.action;
 
-    // 1. ส่งการแจ้งเตือนเข้ากลุ่ม LINE ผ่าน LINE Messaging API
+    // 1. ส่งการแจ้งเตือนเข้ากลุ่ม LINE ผ่าน LINE Messaging API (ไม่มีปัญหา CORS)
     if (action === "line_notify") {
       var lineToken = requestData.token;
       var lineTo = requestData.to;
@@ -386,10 +420,10 @@ function doPost(e) {
             method: "post",
             headers: {
               "Content-Type": "application/json",
-              "Authorization": "Bearer " + lineToken
+              "Authorization": "Bearer " + lineToken.trim()
             },
             payload: JSON.stringify({
-              to: lineTo,
+              to: lineTo.trim(),
               messages: [{ type: "text", text: lineMessage }]
             }),
             muteHttpExceptions: true
@@ -409,39 +443,51 @@ function doPost(e) {
       }
     }
 
-    // 2. ซิงค์ข้อมูลทั้งหมดลง Google Sheets
+    // 2. ซิงค์ข้อมูลลง Google Sheets แบบรวมข้อมูลจากทุกเครื่อง (Upsert: อัปเดตแถวเดิม และเพิ่มแถวใหม่ ไม่ลบของเครื่องอื่น)
     if (action === "sync_records") {
       var records = requestData.records || [];
-      // ล้างข้อมูลเก่าแล้วเขียนใหม่ทั้งหมด
-      if (records.length > 0) {
-        var header = [
-          "เลขที่คำขอ", "วันที่ยื่น", "ชื่อ-นามสกุล", "ตำแหน่ง", "ประเภทการลา", 
-          "วันที่เริ่ม", "วันที่สิ้นสุด", "จำนวนวัน", "เหตุผลการลา", "ผู้ปฏิบัติหน้าที่แทน", 
-          "เบอร์ติดต่อ", "สถานะ", "ความเห็นวิชาการ", "คำสั่งผู้อำนวยการ"
-        ];
+      var existingData = sheet.getDataRange().getValues();
+      var refRowMap = {};
+
+      if (existingData.length <= 1) {
         sheet.clear();
         sheet.appendRow(header);
         sheet.getRange(1, 1, 1, 14).setBackground("#1e3a8a").setFontColor("#ffffff").setFontWeight("bold");
-
-        records.forEach(function(r) {
-          sheet.appendRow([
-            r.referenceNumber,
-            r.submittedAt,
-            r.personnelName,
-            r.personnelPosition,
-            r.leaveTypeLabel,
-            r.startDate,
-            r.endDate,
-            r.totalDays,
-            r.reason,
-            r.substituteName,
-            r.contactPhone,
-            r.statusLabel,
-            r.academicHeadComment || "",
-            r.directorComment || ""
-          ]);
-        });
+      } else {
+        for (var i = 1; i < existingData.length; i++) {
+          var ref = existingData[i][0];
+          if (ref) {
+            refRowMap[ref.toString().trim()] = i + 1; // row number (1-indexed)
+          }
+        }
       }
+
+      records.forEach(function(r) {
+        var ref = (r.referenceNumber || "").toString().trim();
+        var rowData = [
+          r.referenceNumber,
+          r.submittedAt,
+          r.personnelName,
+          r.personnelPosition,
+          r.leaveTypeLabel,
+          r.startDate,
+          r.endDate,
+          r.totalDays,
+          r.reason,
+          r.substituteName,
+          r.contactPhone,
+          r.statusLabel,
+          r.academicHeadComment || "",
+          r.directorComment || ""
+        ];
+
+        if (ref && refRowMap[ref]) {
+          sheet.getRange(refRowMap[ref], 1, 1, 14).setValues([rowData]);
+        } else if (ref) {
+          sheet.appendRow(rowData);
+          refRowMap[ref] = sheet.getLastRow();
+        }
+      });
 
       // ตรวจสอบและส่ง LINE push แนบไปด้วยในคำขอเดียว
       if (requestData.notifyLine && requestData.lineToken && requestData.lineTo && requestData.lineMessage) {
@@ -450,10 +496,10 @@ function doPost(e) {
             method: "post",
             headers: {
               "Content-Type": "application/json",
-              "Authorization": "Bearer " + requestData.lineToken
+              "Authorization": "Bearer " + requestData.lineToken.trim()
             },
             payload: JSON.stringify({
-              to: requestData.lineTo,
+              to: requestData.lineTo.trim(),
               messages: [{ type: "text", text: requestData.lineMessage }]
             }),
             muteHttpExceptions: true
@@ -462,7 +508,18 @@ function doPost(e) {
       }
     } else if (action === "add_record") {
       var r = requestData.record;
-      sheet.appendRow([
+      var existingData = sheet.getDataRange().getValues();
+      var existingRow = 0;
+      var ref = (r.referenceNumber || "").toString().trim();
+
+      for (var j = 1; j < existingData.length; j++) {
+        if (existingData[j][0] && existingData[j][0].toString().trim() === ref) {
+          existingRow = j + 1;
+          break;
+        }
+      }
+
+      var rowData = [
         r.referenceNumber,
         r.submittedAt,
         r.personnelName,
@@ -477,7 +534,13 @@ function doPost(e) {
         r.statusLabel,
         r.academicHeadComment || "",
         r.directorComment || ""
-      ]);
+      ];
+
+      if (existingRow > 0) {
+        sheet.getRange(existingRow, 1, 1, 14).setValues([rowData]);
+      } else {
+        sheet.appendRow(rowData);
+      }
 
       if (requestData.notifyLine && requestData.lineToken && requestData.lineTo && requestData.lineMessage) {
         try {
@@ -485,10 +548,10 @@ function doPost(e) {
             method: "post",
             headers: {
               "Content-Type": "application/json",
-              "Authorization": "Bearer " + requestData.lineToken
+              "Authorization": "Bearer " + requestData.lineToken.trim()
             },
             payload: JSON.stringify({
-              to: requestData.lineTo,
+              to: requestData.lineTo.trim(),
               messages: [{ type: "text", text: requestData.lineMessage }]
             }),
             muteHttpExceptions: true
@@ -499,7 +562,7 @@ function doPost(e) {
 
     return ContentService.createTextOutput(JSON.stringify({
       status: "success",
-      message: "บันทึกลง Google Sheets เรียบร้อยแล้ว"
+      message: "บันทึกลง Google Sheets เรียบร้อยแล้ว (รวมข้อมูลทุกเครื่อง)"
     })).setMimeType(ContentService.MimeType.JSON);
 
   } catch (error) {
@@ -526,12 +589,185 @@ const parseJsonResponseSafe = async (res: Response): Promise<{ isJson: boolean; 
   }
 };
 
+// Fetch unified leave records from Google Sheets (cross-device source of truth)
+export const fetchRecordsFromGoogleSheets = async (
+  sheetId: string,
+  personnelList: Personnel[]
+): Promise<LeaveRecord[] | null> => {
+  if (!sheetId || !sheetId.trim()) return null;
+
+  try {
+    const encodedSheet = encodeURIComponent('สถิติการลา');
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId.trim()}/gviz/tq?tqx=out:json&sheet=${encodedSheet}&tq=${encodeURIComponent('select *')}`;
+    
+    const res = await fetch(url);
+    if (!res.ok) return null;
+
+    const text = await res.text();
+    const match = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]+)\);/);
+    if (!match) return null;
+
+    const json = JSON.parse(match[1]);
+    const rows = json?.table?.rows;
+    if (!Array.isArray(rows) || rows.length === 0) return [];
+
+    const pMapByName = new Map<string, Personnel>();
+    for (const p of personnelList) {
+      pMapByName.set(`${p.prefix}${p.firstName} ${p.lastName}`.trim(), p);
+      pMapByName.set(`${p.firstName} ${p.lastName}`.trim(), p);
+    }
+
+    const records: LeaveRecord[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const c = rows[i]?.c;
+      if (!c || !c[0]?.v) continue;
+
+      const referenceNumber = String(c[0]?.v).trim();
+      const submittedAt = c[1]?.v ? String(c[1]?.v) : new Date().toISOString();
+      const personnelName = c[2]?.v ? String(c[2]?.v).trim() : '';
+      const leaveTypeLabel = c[4]?.v ? String(c[4]?.v).trim() : 'ลาป่วย';
+      
+      // Parse dates
+      let startDate = c[5]?.f || '';
+      if (!startDate && c[5]?.v) {
+        const m = String(c[5].v).match(/Date\((\d+),(\d+),(\d+)\)/);
+        if (m) {
+          startDate = `${m[1]}-${String(Number(m[2]) + 1).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+        } else {
+          startDate = String(c[5].v);
+        }
+      }
+
+      let endDate = c[6]?.f || '';
+      if (!endDate && c[6]?.v) {
+        const m = String(c[6].v).match(/Date\((\d+),(\d+),(\d+)\)/);
+        if (m) {
+          endDate = `${m[1]}-${String(Number(m[2]) + 1).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+        } else {
+          endDate = String(c[6].v);
+        }
+      }
+
+      const totalDays = typeof c[7]?.v === 'number' ? c[7].v : parseFloat(String(c[7]?.v || '1'));
+      const reason = c[8]?.v ? String(c[8].v).trim() : '';
+      const substituteName = c[9]?.v ? String(c[9].v).trim() : '';
+      const contactPhone = c[10]?.v ? String(c[10].v).trim() : '';
+      const statusLabel = c[11]?.v ? String(c[11].v).trim() : 'รอความเห็นหัวหน้าวิชาการ';
+      const academicHeadComment = c[12]?.v ? String(c[12].v).trim() : undefined;
+      const directorComment = c[13]?.v ? String(c[13].v).trim() : undefined;
+
+      // Find personnel
+      let matchedPersonnel = pMapByName.get(personnelName);
+      if (!matchedPersonnel) {
+        matchedPersonnel = personnelList.find(p => personnelName.includes(p.firstName));
+      }
+      const personnelId = matchedPersonnel ? matchedPersonnel.id : 'p-007';
+
+      // Find substitute personnel
+      let subPersonnelId: string | undefined = undefined;
+      if (substituteName && substituteName !== '-') {
+        const subP = pMapByName.get(substituteName) || personnelList.find(p => substituteName.includes(p.firstName));
+        if (subP) subPersonnelId = subP.id;
+      }
+
+      // Map leave type
+      let leaveType: LeaveType = 'sick';
+      if (leaveTypeLabel.includes('กิจ') || leaveTypeLabel.includes('พักผ่อน')) leaveType = 'personal';
+      else if (leaveTypeLabel.includes('คลอด')) leaveType = 'maternity';
+      else if (leaveTypeLabel.includes('ช่วยภริยา') || leaveTypeLabel.includes('ภริยา')) leaveType = 'wife_delivery';
+      else if (leaveTypeLabel.includes('ทหาร')) leaveType = 'military';
+      else if (leaveTypeLabel.includes('อุปสมบท')) leaveType = 'ordination';
+      else if (leaveTypeLabel.includes('อื่น') || leaveTypeLabel.includes('อบรม')) leaveType = 'other';
+
+      // Map status
+      let status: LeaveStatus = 'pending_academic';
+      if (statusLabel.includes('อนุมัติแล้ว')) status = 'approved';
+      else if (statusLabel.includes('ไม่อนุมัติ')) status = 'rejected';
+      else if (statusLabel.includes('ยกเลิก')) status = 'cancelled';
+      else if (statusLabel.includes('รอ ผอ') || statusLabel.includes('เสนอ ผอ')) status = 'pending_director';
+
+      // Fiscal year
+      const fyMatch = referenceNumber.match(/\/(\d{4})/);
+      const fiscalYear = fyMatch ? parseInt(fyMatch[1], 10) : 2568;
+
+      records.push({
+        id: `sheet-${referenceNumber.replace(/[^a-zA-Z0-9]/g, '_')}`,
+        referenceNumber,
+        personnelId,
+        leaveType,
+        fiscalYear,
+        startDate,
+        endDate,
+        totalDays,
+        reason,
+        contactAddress: '',
+        contactPhone,
+        substitutePersonnelId: subPersonnelId,
+        status,
+        submittedAt,
+        applicantSignature: matchedPersonnel?.signatureUrl || createDefaultSignatureSvg(personnelName || 'ผู้ขอลา'),
+        academicHeadComment,
+        directorComment
+      });
+    }
+
+    return records;
+  } catch (err) {
+    console.warn('Failed to fetch records from Google Sheets:', err);
+    return null;
+  }
+};
+
+// Merge local records and sheet records cleanly (unifies all devices, never loses records)
+export const mergeLeaveRecords = (
+  localRecords: LeaveRecord[],
+  sheetRecords: LeaveRecord[]
+): LeaveRecord[] => {
+  const map = new Map<string, LeaveRecord>();
+
+  // 1. Add all local records first
+  for (const r of localRecords) {
+    const key = r.referenceNumber || r.id;
+    map.set(key, r);
+  }
+
+  // 2. Merge in sheet records
+  for (const s of sheetRecords) {
+    const key = s.referenceNumber || s.id;
+    const existing = map.get(key);
+    if (!existing) {
+      // New record from another device!
+      map.set(key, s);
+    } else {
+      // Record exists in both: merge with precedence for updated status
+      const isSheetMoreAdvanced = 
+        (s.status === 'approved' || s.status === 'rejected' || s.status === 'cancelled') && 
+        (existing.status === 'pending_academic' || existing.status === 'pending_director');
+      
+      map.set(key, {
+        ...existing,
+        ...s,
+        status: isSheetMoreAdvanced ? s.status : existing.status,
+        academicHeadComment: s.academicHeadComment || existing.academicHeadComment,
+        directorComment: s.directorComment || existing.directorComment,
+      });
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    return new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime();
+  });
+};
+
+
 // Sync with Google Sheets Web App endpoint via Server Proxy (avoids CORS)
 export const syncWithGoogleSheets = async (
   webhookUrl: string, 
   records: LeaveRecord[], 
   personnelList: Personnel[],
-  settings?: SchoolSettings
+  settings?: SchoolSettings,
+  lineMessage?: string
 ): Promise<{ success: boolean; message: string }> => {
   if (!webhookUrl || !webhookUrl.trim().startsWith('http')) {
     return { success: false, message: 'กรุณากรอก Webhook URL ของ Google Apps Script ที่ถูกต้อง' };
@@ -560,12 +796,26 @@ export const syncWithGoogleSheets = async (
     };
   });
 
-  const payload = {
+  const shouldNotifyLine = Boolean(
+    lineMessage &&
+    settings?.isLineNotifyEnabled &&
+    settings?.lineChannelAccessToken &&
+    settings?.lineGroupId
+  );
+
+  const payload: any = {
     action: 'sync_records',
     records: payloadRecords,
     school: settings?.schoolName ? `${settings.schoolName} ${settings.schoolArea}` : 'โรงเรียนบ้านห้วยไคร้ สพป.สุโขทัย เขต 2',
     syncTime: new Date().toISOString()
   };
+
+  if (shouldNotifyLine) {
+    payload.notifyLine = true;
+    payload.lineToken = settings?.lineChannelAccessToken?.trim();
+    payload.lineTo = settings?.lineGroupId?.trim();
+    payload.lineMessage = lineMessage;
+  }
 
   try {
     // 1. Try server proxy first (bypasses browser CORS and reads actual response)

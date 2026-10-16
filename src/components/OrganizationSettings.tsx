@@ -816,16 +816,37 @@ export const OrganizationSettings: React.FC<OrganizationSettingsProps> = ({
               </div>
             )}
 
-            <div className="flex justify-start">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2">
               <button
                 type="button"
                 onClick={handleTestNotification}
                 disabled={isTesting}
-                className="flex items-center gap-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 px-4 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
+                className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-700 px-4 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 shadow-xs"
               >
-                <Send className="w-3.5 h-3.5 text-emerald-600" />
+                <Send className="w-3.5 h-3.5 text-white" />
                 {isTesting ? 'กำลังทดสอบส่ง...' : 'ทดสอบส่งข้อความเข้ากลุ่ม LINE ทันที'}
               </button>
+
+              <button
+                type="button"
+                onClick={onOpenGoogleSheetsModal}
+                className="flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 px-4 py-2.5 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                <Sheet className="w-3.5 h-3.5 text-emerald-600" />
+                ดูโค้ด Apps Script สำหรับส่งเข้า LINE
+              </button>
+            </div>
+
+            {/* Troubleshooting notice */}
+            <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-2xl text-[11px] text-amber-900 space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-amber-950">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span>คำแนะนำหากกดส่งข้อความแล้วยังไม่ขึ้นแจ้งเตือนในกลุ่ม LINE:</span>
+              </div>
+              <p className="leading-relaxed text-slate-600">
+                1. ตรวจสอบว่าได้เชิญบอท LINE เข้ากลุ่มโรงเรียน (Group ID: <code className="font-mono bg-white px-1 py-0.5 rounded border border-amber-200">{lineGroupId || 'Cd6926103d0753bbc0bc55f449083f47a'}</code>) เรียบร้อยแล้ว<br />
+                2. หากเปิดเว็บผ่าน GitHub Pages ให้คัดลอกโค้ด Google Apps Script เวอร์ชันใหม่ไปวางทับในเมนู <strong>ส่วนขยาย &gt; Apps Script</strong> ของ Google Sheets แล้วกด <strong>Deploy (New version)</strong> เพื่อให้ Google Sheets ช่วยส่งข้อความเข้ากลุ่มโดยไม่มีปัญหา CORS
+              </p>
             </div>
           </div>
         )}

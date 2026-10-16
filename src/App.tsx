@@ -25,6 +25,8 @@ import {
   syncWithGoogleSheets,
   fetchDatabaseFromServer,
   syncDatabaseToServer,
+  fetchRecordsFromGoogleSheets,
+  mergeLeaveRecords,
   sendLineNotification,
   formatNewLeaveLineMessage,
   formatAcademicReviewLineMessage,
@@ -49,14 +51,21 @@ import { Building2, LogIn, CheckCircle2 } from 'lucide-react';
 export default function App() {
   // 1. Core State
   const [personnelList, setPersonnelList] = useState<Personnel[]>(getStoredPersonnel);
-  const [currentPersonnelId, setCurrentPersonnelId] = useState<string>(getActiveUserId);
+  const [currentPersonnelId, setCurrentPersonnelId] = useState<string>(() => {
+    const saved = localStorage.getItem('huaykhrai_active_user_id');
+    if (!saved || saved === 'p-007') {
+      localStorage.setItem('huaykhrai_active_user_id', 'p-demo');
+      return 'p-demo';
+    }
+    return saved;
+  });
   const [leaveRecords, setLeaveRecords] = useState<LeaveRecord[]>(getStoredLeaveRecords);
   const [settings, setSettings] = useState<SchoolSettings>(getStoredSchoolSettings);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(getStoredAuditLogs);
 
-  // Initial Login Role Pop-up State
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(true);
-  const [hasSelectedRoleOnEntry, setHasSelectedRoleOnEntry] = useState<boolean>(false);
+  // Initial Login Role Pop-up State (disabled on load so user lands directly on Dashboard)
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
+  const [hasSelectedRoleOnEntry, setHasSelectedRoleOnEntry] = useState<boolean>(true);
   const [welcomeToast, setWelcomeToast] = useState<{ name: string; position: string } | null>(null);
 
   // 2. Navigation & Security State (SPA module switcher)
@@ -105,7 +114,8 @@ export default function App() {
     customRecords?: LeaveRecord[],
     customPersonnel?: Personnel[],
     customSettings?: SchoolSettings,
-    customLogs?: AuditLog[]
+    customLogs?: AuditLog[],
+    lineMessage?: string
   ) => {
     const recs = customRecords ?? leaveRecords;
     const pers = customPersonnel ?? personnelList;
@@ -120,68 +130,66 @@ export default function App() {
       auditLogs: logs
     });
 
-    // 2. Sync to Google Sheets if webhook configured and auto-sync is on
+    // 2. Sync to Google Sheets if webhook configured and auto-sync is on (merges cleanly without deleting other devices' rows)
     if (sett.googleSheetsWebhookUrl && sett.isAutoSyncEnabled !== false) {
-      syncWithGoogleSheets(sett.googleSheetsWebhookUrl, recs, pers, sett);
+      syncWithGoogleSheets(sett.googleSheetsWebhookUrl, recs, pers, sett, lineMessage);
     }
   };
 
-  // Cross-device synchronization on load & polling
+  // Cross-device synchronization on load & polling (unifies data from all devices via Google Sheets)
   useEffect(() => {
     let isMounted = true;
 
     const loadCentralData = async () => {
-      const serverData = await fetchDatabaseFromServer();
-      if (!isMounted) return;
+      let currentRecs = leaveRecords;
 
-      if (serverData && (serverData.leaveRecords || serverData.personnelList)) {
-        if (serverData.leaveRecords) {
-          setLeaveRecords(serverData.leaveRecords);
-          saveLeaveRecords(serverData.leaveRecords);
+      // 1. Try server database first if running full-stack
+      try {
+        const serverData = await fetchDatabaseFromServer();
+        if (serverData && isMounted) {
+          if (serverData.leaveRecords && serverData.leaveRecords.length > 0) {
+            currentRecs = serverData.leaveRecords;
+            setLeaveRecords(serverData.leaveRecords);
+            saveLeaveRecords(serverData.leaveRecords);
+          }
+          if (serverData.personnelList) {
+            setPersonnelList(serverData.personnelList);
+            savePersonnel(serverData.personnelList);
+          }
+          if (serverData.settings) {
+            setSettings(serverData.settings);
+            saveSchoolSettings(serverData.settings);
+          }
+          if (serverData.auditLogs) {
+            setAuditLogs(serverData.auditLogs);
+          }
         }
-        if (serverData.personnelList) {
-          setPersonnelList(serverData.personnelList);
-          savePersonnel(serverData.personnelList);
+      } catch {
+        // server-side not available (static hosting)
+      }
+
+      // 2. Fetch unified records from Google Sheets (source of truth for all devices)
+      if (settings.googleSheetId) {
+        try {
+          const sheetRecords = await fetchRecordsFromGoogleSheets(settings.googleSheetId, personnelList);
+          if (sheetRecords && sheetRecords.length > 0 && isMounted) {
+            const merged = mergeLeaveRecords(currentRecs, sheetRecords);
+            setLeaveRecords(merged);
+            saveLeaveRecords(merged);
+          }
+        } catch {
+          // ignore network hiccups
         }
-        if (serverData.settings) {
-          setSettings(serverData.settings);
-          saveSchoolSettings(serverData.settings);
-        }
-        if (serverData.auditLogs) {
-          setAuditLogs(serverData.auditLogs);
-        }
-      } else {
-        // Initialize central database on server
-        syncDatabaseToServer({
-          personnelList,
-          leaveRecords,
-          settings,
-          auditLogs
-        });
       }
     };
 
     loadCentralData();
 
-    // Background poll every 8 seconds to synchronize changes across devices
+    // Background poll every 12 seconds to synchronize changes across all devices (mobile, tablet, PC)
     const interval = setInterval(async () => {
       if (!isMounted) return;
-      const latest = await fetchDatabaseFromServer();
-      if (latest && isMounted) {
-        if (latest.leaveRecords) {
-          setLeaveRecords(latest.leaveRecords);
-          saveLeaveRecords(latest.leaveRecords);
-        }
-        if (latest.personnelList) {
-          setPersonnelList(latest.personnelList);
-          savePersonnel(latest.personnelList);
-        }
-        if (latest.settings) {
-          setSettings(latest.settings);
-          saveSchoolSettings(latest.settings);
-        }
-      }
-    }, 8000);
+      await loadCentralData();
+    }, 12000);
 
     const handleFocus = () => {
       loadCentralData();
@@ -193,7 +201,7 @@ export default function App() {
       clearInterval(interval);
       window.removeEventListener('focus', handleFocus);
     };
-  }, []);
+  }, [settings.googleSheetId]);
 
   // SPA module switching with PIN 1234 protection for Approvals and Organization Settings
   const handleSelectTab = (tabId: string) => {
@@ -278,12 +286,14 @@ export default function App() {
     );
     setAuditLogs(updatedLogs);
 
-    // Instant sync to Server DB and Google Sheets
-    syncAllData(updated, personnelList, settings, updatedLogs);
+    const lineMsg = formatNewLeaveLineMessage(newRecord, currentPersonnel, settings);
+
+    // Instant sync to Server DB and Google Sheets (with LINE message attached for Google Apps Script)
+    syncAllData(updated, personnelList, settings, updatedLogs, lineMsg);
 
     // Auto-send LINE notification to school group
     if (settings.isLineNotifyEnabled && settings.lineChannelAccessToken && settings.lineGroupId) {
-      sendLineNotification(settings, formatNewLeaveLineMessage(newRecord, currentPersonnel, settings));
+      sendLineNotification(settings, lineMsg);
     }
   };
 
@@ -314,12 +324,17 @@ export default function App() {
     );
     setAuditLogs(updatedLogs);
 
-    syncAllData(updated, personnelList, settings, updatedLogs);
-
-    if (settings.isLineNotifyEnabled && settings.lineChannelAccessToken && settings.lineGroupId && record) {
+    let lineMsg: string | undefined = undefined;
+    if (record) {
       const applicant = personnelList.find(p => p.id === record.personnelId) || currentPersonnel;
       const headName = `${currentPersonnel.prefix}${currentPersonnel.firstName} ${currentPersonnel.lastName}`;
-      sendLineNotification(settings, formatAcademicReviewLineMessage(record, applicant, headName, comment));
+      lineMsg = formatAcademicReviewLineMessage(record, applicant, headName, comment);
+    }
+
+    syncAllData(updated, personnelList, settings, updatedLogs, lineMsg);
+
+    if (settings.isLineNotifyEnabled && settings.lineChannelAccessToken && settings.lineGroupId && lineMsg) {
+      sendLineNotification(settings, lineMsg);
     }
   };
 
@@ -351,12 +366,17 @@ export default function App() {
     );
     setAuditLogs(updatedLogs);
 
-    syncAllData(updated, personnelList, settings, updatedLogs);
-
-    if (settings.isLineNotifyEnabled && settings.lineChannelAccessToken && settings.lineGroupId && record) {
+    let lineMsg: string | undefined = undefined;
+    if (record) {
       const applicant = personnelList.find(p => p.id === record.personnelId) || currentPersonnel;
       const dirName = `${currentPersonnel.prefix}${currentPersonnel.firstName} ${currentPersonnel.lastName}`;
-      sendLineNotification(settings, formatDirectorDecisionLineMessage(record, applicant, dirName, isApproved, comment));
+      lineMsg = formatDirectorDecisionLineMessage(record, applicant, dirName, isApproved, comment);
+    }
+
+    syncAllData(updated, personnelList, settings, updatedLogs, lineMsg);
+
+    if (settings.isLineNotifyEnabled && settings.lineChannelAccessToken && settings.lineGroupId && lineMsg) {
+      sendLineNotification(settings, lineMsg);
     }
   };
 

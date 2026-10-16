@@ -115,7 +115,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </h1>
               </div>
               <p className="text-[11px] text-blue-200 truncate">
-                {settings.schoolName || 'โรงเรียนบ้านห้วยไคร้'} • {settings.schoolArea || 'สพป.สุโขทัย เขต 2'}
+                {settings.schoolName || 'โรงเรียนบ้านห้วยไคร้'}
               </p>
             </div>
           </div>
